@@ -81,69 +81,55 @@
     });
 
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status === "complete" && tab.url) {
-        const service = detectService(tab.url);
-        
-        // ============================================================
-        // ADD THIS EXTEND TRANSITION HANDLER HERE
-        // ============================================================
-        // Handle extend transition from Huddle to Meet
-        // In background.js - inside chrome.tabs.onUpdated
-// Replace the extend transition section with this:
-
-        // In background.js - inside chrome.tabs.onUpdated
-// Replace the extend transition section with this:
-
-// In background.js - inside chrome.tabs.onUpdated
-// Replace the extend transition section with this:
-
-if (service === 'gmeet') {
-    // Check if this is an extend operation
-    chrome.storage.local.get(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording'], async (result) => {
-        if (result.isExtendingToMeet) {
-            console.log("🔄 EXTEND TRANSITION - Meet tab opened from Huddle");
-            
-            const transitionTime = result.extendTransitionTime || 0;
-            const timeSinceExtend = Date.now() - transitionTime;
-            
-            if (timeSinceExtend < 10000) {
-                console.log("✅ Valid extend transition - FORCE starting Meet recording");
-                
-                // Clear the flags
-                chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording']);
-                
-                // FORCE start recording regardless of auto-record setting
-                console.log("🎬 FORCE starting Meet recording (auto-record setting ignored)");
-                setTimeout(() => {
-                    startRecordingForTab(tabId, 'gmeet');
-                }, 3000);
-                
-                // Also show a status message to the user
-                chrome.tabs.sendMessage(tabId, { 
-                    action: "showMeetStatus", 
-                    message: "🎬 Auto-recording started (extended from Huddle)",
-                    duration: 5000
+        if (changeInfo.status === "complete" && tab.url) {
+            const service = detectService(tab.url);
+                        
+            if (service === 'gmeet') {
+                // Check if this is an extend operation
+                chrome.storage.local.get(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording'], async (result) => {
+                    if (result.isExtendingToMeet) {
+                        console.log("🔄 EXTEND TRANSITION - Meet tab opened from Huddle");
+                        
+                        const transitionTime = result.extendTransitionTime || 0;
+                        const timeSinceExtend = Date.now() - transitionTime;
+                        
+                        if (timeSinceExtend < 10000) {
+                            console.log("✅ Valid extend transition - FORCE starting Meet recording");
+                            
+                            // Clear the flags
+                            chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording']);
+                            
+                            // FORCE start recording regardless of auto-record setting
+                            console.log("🎬 FORCE starting Meet recording (auto-record setting ignored)");
+                            setTimeout(() => {
+                                //startRecordingForTab(tabId, 'gmeet');
+                            }, 3000);
+                            
+                            // Also show a status message to the user
+                            chrome.tabs.sendMessage(tabId, { 
+                                action: "showMeetStatus", 
+                                message: "🎬 Auto-recording started (extended from Huddle)",
+                                duration: 5000
+                            });
+                        } else {
+                            console.log("⚠️ Extend flag expired - ignoring");
+                            chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording']);
+                        }
+                    }
                 });
-            } else {
-                console.log("⚠️ Extend flag expired - ignoring");
-                chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording']);
+            }            
+            
+            if (service === 'gmeet') {
+                handleGmeetTabUpdate(tabId, tab);
+            } else if (service === 'teams') {
+                handleTeamsTabUpdate(tabId, tab);
+            } else if (service === 'zoom') {
+                handleZoomTabUpdate(tabId, tab);
+            } else if (service === 'gchat') {
+                handleGchatTabUpdate(tabId, tab);
             }
         }
     });
-}
-        // ============================================================
-        
-        if (service === 'gmeet') {
-            handleGmeetTabUpdate(tabId, tab);
-        } else if (service === 'teams') {
-            handleTeamsTabUpdate(tabId, tab);
-        } else if (service === 'zoom') {
-            handleZoomTabUpdate(tabId, tab);
-        } else if (service === 'gchat') {
-            handleGchatTabUpdate(tabId, tab);
-        }
-    }
-});
 
     // Auto-detect huddle tabs (for Google Chat)
     chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -600,6 +586,13 @@ if (service === 'gmeet') {
                 }
 
                 if (message.action === "revokeAutoRecordPermission") {
+                    // BLOCK revoking for gchat
+                    if (message.service === 'gchat') {
+                        console.log("🔒 Cannot revoke GChat auto-record permission - always enabled");
+                        sendResponse({ success: false, reason: "gchat_always_enabled" });
+                        return true;
+                    }
+
                     const result = await chrome.storage.local.get(['autoRecordPermissions']);
                     const permissions = result.autoRecordPermissions || {};
                     permissions[message.service] = false;
@@ -881,22 +874,19 @@ if (service === 'gmeet') {
         chrome.runtime.getPlatformInfo(() => {});
     }, 20000);
 
-    // ============================================================
-// ADD THIS AT THE BOTTOM OF background.js (before the final console.log)
-// ============================================================
-
-// Clean up stale extend flags after 30 seconds
-setInterval(() => {
-    chrome.storage.local.get(['isExtendingToMeet', 'extendTransitionTime'], (result) => {
-        if (result.isExtendingToMeet && result.extendTransitionTime) {
-            const timeSinceExtend = Date.now() - result.extendTransitionTime;
-            if (timeSinceExtend > 30000) {
-                console.log("🧹 Cleaning up stale extend flag");
-                chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime']);
+  
+    // Clean up stale extend flags after 30 seconds
+    setInterval(() => {
+        chrome.storage.local.get(['isExtendingToMeet', 'extendTransitionTime'], (result) => {
+            if (result.isExtendingToMeet && result.extendTransitionTime) {
+                const timeSinceExtend = Date.now() - result.extendTransitionTime;
+                if (timeSinceExtend > 30000) {
+                    console.log("🧹 Cleaning up stale extend flag");
+                    chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime']);
+                }
             }
-        }
-    });
-}, 10000);
+        });
+    }, 10000);
 
     console.log("🔧 Unified Background script loaded successfully");
 })();
