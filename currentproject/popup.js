@@ -312,6 +312,55 @@ function detectServiceFromUrl(url) {
     return null;
 }
 
+async function ensureGchatAlwaysOn() {
+    const result = await chrome.storage.local.get(['autoRecordPermissions']);
+    const permissions = result.autoRecordPermissions || {};
+    
+    // Force gchat to be true
+    if (!permissions['gchat']) {
+        permissions['gchat'] = true;
+        await chrome.storage.local.set({ autoRecordPermissions: permissions });
+        
+        // Notify background script
+        await chrome.runtime.sendMessage({ 
+            action: "grantAutoRecordPermission", 
+            service: 'gchat'
+        });
+        
+        console.log("🔒 GChat auto-record forced to ON");
+    }
+}
+
+async function loadAutoRecordStateForService(service) {
+    const result = await chrome.storage.local.get(['autoRecordPermissions']);
+    const enabled = result.autoRecordPermissions?.[service] || false;
+    
+    const autoRecordToggle = document.getElementById('autoRecordToggle');
+    const toggleLabel = document.getElementById('toggleLabel');
+    
+    if (autoRecordToggle) autoRecordToggle.checked = enabled;
+    if (toggleLabel) toggleLabel.textContent = enabled ? 'ON' : 'OFF';
+}
+
+async function ensureGchatAlwaysOn() {
+    const result = await chrome.storage.local.get(['autoRecordPermissions']);
+    const permissions = result.autoRecordPermissions || {};
+    
+    // Force gchat to be true
+    if (!permissions['gchat']) {
+        permissions['gchat'] = true;
+        await chrome.storage.local.set({ autoRecordPermissions: permissions });
+        
+        // Notify background script
+        await chrome.runtime.sendMessage({ 
+            action: "grantAutoRecordPermission", 
+            service: 'gchat'
+        });
+        
+        console.log("🔒 GChat auto-record forced to ON");
+    }
+}
+
 function updateServiceUI(service) {
     updateTheme(service);
     
@@ -324,6 +373,48 @@ function updateServiceUI(service) {
     if (gchatNote) gchatNote.style.display = service === 'gchat' ? 'block' : 'none';
     if (teamsNote) teamsNote.style.display = service === 'teams' ? 'block' : 'none';
     if (zoomNote) zoomNote.style.display = service === 'zoom' ? 'block' : 'none';
+    
+    // Handle auto-record toggle UI based on service
+    const autoRecordToggle = document.getElementById('autoRecordToggle');
+    const toggleLabel = document.getElementById('toggleLabel');
+    const permissionText = document.getElementById('permissionText');
+    const alwaysOnBadge = document.getElementById('alwaysOnBadge');
+    
+    if (service === 'gchat') {
+        // GChat: Always ON, toggle disabled
+        if (autoRecordToggle) {
+            autoRecordToggle.disabled = true;
+            autoRecordToggle.checked = true;
+            autoRecordToggle.style.opacity = '0.6';
+            autoRecordToggle.style.cursor = 'not-allowed';
+        }
+        if (toggleLabel) {
+            toggleLabel.textContent = 'ON';
+            toggleLabel.style.color = '#4CAF50';
+        }
+        if (alwaysOnBadge) {
+            alwaysOnBadge.style.display = 'inline-block';
+        }
+        if (permissionText) {
+            permissionText.textContent = '✅ Google Chat Huddle auto-recording is always enabled';
+        }
+        
+        // Ensure permission is saved as ON
+        ensureGchatAlwaysOn();
+    } else {
+        // Other services: Normal toggle behavior
+        if (autoRecordToggle) {
+            autoRecordToggle.disabled = false;
+            autoRecordToggle.style.opacity = '1';
+            autoRecordToggle.style.cursor = 'pointer';
+        }
+        if (alwaysOnBadge) {
+            alwaysOnBadge.style.display = 'none';
+        }
+        
+        // Load the actual permission state for this service
+        loadAutoRecordStateForService(service);
+    }
     
     updateStatus(`✅ ${SERVICE_CONFIG[service].name} selected - Recording auto-saves to Downloads when you leave`);
     updateButtonStates();
@@ -484,6 +575,16 @@ function updateToggleUI() {
 
 async function handleAutoRecordToggle(e) {
     const enabled = e.target.checked;
+
+    // BLOCK turning OFF for gchat
+    if (currentService === 'gchat' && !enabled) {
+        // Revert the checkbox back to checked
+        e.target.checked = true;
+        showPopupMessage("❌ Google Chat Huddle auto-recording is always enabled and cannot be turned off", "warning");
+        return;
+    }
+
+    const serviceName = SERVICE_CONFIG[currentService]?.name || 'meeting';
     
     if (enabled) {
         const serviceName = SERVICE_CONFIG[currentService]?.name || 'meeting';
