@@ -1,6 +1,7 @@
 
 // UNIFIED CONTENT.JS - Google Meet, Microsoft Teams & Zoom
-// ADD THIS AT THE VERY TOP OF YOUR EXISTING content.js file
+
+
 // ============================================================
 // GOOGLE CHAT HUDDLE RECORDER - Auto-save when leaving
 // ============================================================
@@ -249,63 +250,56 @@
             }, 1000);
         }
         
-        // ============================================================
-// INSIDE initDirectHuddleRecorder() function - ADD THIS NEW FUNCTION
-// Add it BEFORE the setupLeaveButtonDetection() function
-// ============================================================
+        function setupExtendButtonDetection() {
+            console.log("🔍 Setting up Extend button detection");
+            
+            document.addEventListener('click', (e) => {
+                const extendButton = e.target.closest(
+                    'button[aria-label="Move to a tab"], ' +
+                    'button[jsname="f0nqNc"], ' +
+                    'button[data-tooltip*="Move to a tab"]'
+                );
 
-function setupExtendButtonDetection() {
-    console.log("🔍 Setting up Extend button detection");
-    
-    document.addEventListener('click', (e) => {
-        const extendButton = e.target.closest(
-            'button[aria-label="Move to a tab"], ' +
-            'button[jsname="f0nqNc"], ' +
-            'button[data-tooltip*="Move to a tab"]'
-        );
-        
-        // In content.js - inside setupExtendButtonDetection() function
-// Replace the forceSaveAndStop section with this:
-
-if (extendButton && isRecording && !hasAutoSaved) {
-    console.log("🚀 EXTEND BUTTON CLICKED - Moving to Meet tab");
-    
-    // Set flag to indicate we're extending (will force Meet recording)
-    chrome.storage.local.set({ 
-        isExtendingToMeet: true,
-        extendTransitionTime: Date.now(),
-        forceMeetRecording: true  // NEW: Force Meet recording even if auto is OFF
-    });
-    
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // ALWAYS save Huddle recording
-    forceSaveAndStop("Extending to Meet - saving Huddle recording").then(() => {
-        setTimeout(() => {
-            try {
-                extendButton.click();
-            } catch(err) {
-                console.log("Could not re-trigger extend click:", err);
-            }
-        }, 500);
-    });
-}
-    }, true);
-    
-    const extendObserver = new MutationObserver(() => {
-        const extendBtn = document.querySelector('button[aria-label="Move to a tab"], button[jsname="f0nqNc"]');
-        if (extendBtn && !extendBtn.hasAttribute('data-extend-listener')) {
-            extendBtn.setAttribute('data-extend-listener', 'true');
-            console.log("✅ Extend button detected");
+        if (extendButton && isRecording && !hasAutoSaved) {
+            console.log("🚀 EXTEND BUTTON CLICKED - Moving to Meet tab");
+            
+            // Set flag to indicate we're extending (will force Meet recording)
+            chrome.storage.local.set({ 
+                isExtendingToMeet: true,
+                extendTransitionTime: Date.now(),
+                // forceMeetRecording: true  // NEW: Force Meet recording even if auto is OFF
+            });
+            
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // ALWAYS save Huddle recording
+            forceSaveAndStop("Extending to Meet - saving Huddle recording").then(() => {
+                setTimeout(() => {
+                    try {
+                        extendButton.click();
+                    } catch(err) {
+                        console.log("Could not re-trigger extend click:", err);
+                    }
+                }, 500);
+            });
         }
-    });
-    
-    extendObserver.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-}
+            }, true);
+            
+            const extendObserver = new MutationObserver(() => {
+                const extendBtn = document.querySelector('button[aria-label="Move to a tab"], button[jsname="f0nqNc"]');
+                if (extendBtn && !extendBtn.hasAttribute('data-extend-listener')) {
+                    extendBtn.setAttribute('data-extend-listener', 'true');
+                    console.log("✅ Extend button detected");
+                }
+            });
+            
+            extendObserver.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        }
+
 
         function setupLeaveButtonDetection() {
             console.log("🔍 Setting up Leave Call button detection");
@@ -573,15 +567,12 @@ if (extendButton && isRecording && !hasAutoSaved) {
         }
         
         async function loadAutoRecordSetting() {
-            try {
-                const result = await chrome.storage.local.get(['autoRecordPermissions']);
-                const autoRecordEnabled = result.autoRecordPermissions?.['gchat'] || false;
-                
-                if (autoRecordEnabled && isInMeeting()) {
-                    console.log("🎬 Auto-record enabled - starting recording");
-                    setTimeout(() => startRecording(true), 1500);
-                }
-            } catch(e) {}
+            // For gchat, ALWAYS auto-record if in meeting
+            // No need to check storage anymore
+            if (isInMeeting()) {
+                console.log("🎬 GChat: Auto-recording ALWAYS enabled - starting recording");
+                setTimeout(() => startRecording(true), 1500);
+            }
         }
         
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -679,37 +670,33 @@ if (extendButton && isRecording && !hasAutoSaved) {
     }
 })();
 
-// ============================================================
-// YOUR EXISTING CONTENT.JS CODE GOES BELOW
-// (gmeetContent, teamsContent, zoomContent functions)
-// ============================================================
+
 (function() {
     'use strict';
 
     // Service detection
-  // Service detection
-function detectService() {
-    const url = window.location.href;
-    // Check if we're in Huddle iframe FIRST
-    if (url.includes('meet.google.com/_/frame') || (url.includes('meet.google.com') && window !== window.top)) {
-        return null; // Don't run Meet code in Huddle iframe
+    function detectService() {
+        const url = window.location.href;
+        // Check if we're in Huddle iframe FIRST
+        if (url.includes('meet.google.com/_/frame') || (url.includes('meet.google.com') && window !== window.top)) {
+            return null; // Don't run Meet code in Huddle iframe
+        }
+        if (url.includes('meet.google.com')) return 'gmeet';
+        if (url.includes('teams.microsoft.com') || url.includes('teams.live.com')) return 'teams';
+        if (url.includes('zoom.us') || url.includes('zoom.com')) return 'zoom'; 
+        return null;
     }
-    if (url.includes('meet.google.com')) return 'gmeet';
-    if (url.includes('teams.microsoft.com') || url.includes('teams.live.com')) return 'teams';
-    if (url.includes('zoom.us') || url.includes('zoom.com')) return 'zoom'; 
-    return null;
-}
 
-const currentService = detectService();
+    const currentService = detectService();
 
-// Initialize based on service (only if NOT in Huddle iframe)
-if (currentService === 'gmeet') {
-    gmeetContent();
-} else if (currentService === 'teams') {
-    teamsContent();
-} else if (currentService === 'zoom') {
-    zoomContent();
-}
+    // Initialize based on service (only if NOT in Huddle iframe)
+    if (currentService === 'gmeet') {
+        gmeetContent();
+    } else if (currentService === 'teams') {
+        teamsContent();
+    } else if (currentService === 'zoom') {
+        zoomContent();
+    }
 
     // ==================== GOOGLE MEET ====================
     function gmeetContent() {
