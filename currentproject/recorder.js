@@ -772,16 +772,58 @@
     }
 
     function stopRecording() {
-        if (mediaRecorder && isRecording) {
-            console.log("🛑 Stopping recording...");
-            if (currentService === 'gmeet') {
-                broadcastToMeetTab("🟡 Stopping recording...");
-            }
-            mediaRecorder.stop();
-        } else {
-            console.log("⚠️ No active recording to stop");
-        }
+
+    if (!mediaRecorder || !isRecording) {
+        console.log("⚠️ No active recording to stop");
+        return;
     }
+
+    console.log("🛑 Stopping recording properly...");
+
+    if (currentService === 'gmeet') {
+        broadcastToMeetTab("🟡 Stopping recording...");
+    } else if (currentService === 'teams') {
+        broadcastToTeamsTab("🟡 Stopping recording...");
+    } else if (currentService === 'zoom') {
+        broadcastToZoomTab("🟡 Stopping recording...");
+    }
+
+    try {
+
+        // Force final chunk generation
+        mediaRecorder.requestData();
+
+    } catch (e) {
+        console.log("⚠️ requestData failed:", e);
+    }
+
+    setTimeout(() => {
+
+        try {
+
+            if (mediaRecorder.state === "recording") {
+
+                mediaRecorder.stop();
+
+                console.log("✅ MediaRecorder stop triggered");
+
+            }
+
+        } catch (error) {
+
+            console.error("❌ Error stopping recorder:", error);
+
+            // Emergency fallback
+            if (recordedChunks.length > 0) {
+
+                console.log("🚨 Emergency download fallback");
+
+                downloadRecording();
+            }
+        }
+
+    }, 500);
+}
 
     // ==================== TEAMS SPECIFIC ====================    
     function broadcastToTeamsTab(message, duration = 4000) {
