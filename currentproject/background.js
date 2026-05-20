@@ -6,6 +6,8 @@
     let userPermissionGranted = false;
     let currentRecordingTab = null;
     let isAutoRecording = false;
+    let isExtendingToMeet = false;
+    let extendTransitionTime = 0;
     let autoStartTimeout = null;
     let autoRecordPermissions = {};
 
@@ -81,6 +83,24 @@
     });
 
     chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+        if (changeInfo.status === 'complete' &&
+    tab.url &&
+    tab.url.includes('meet.google.com')) {
+
+    console.log("🔄 Meet opened from Huddle");
+
+    isExtendingToMeet = true;
+    extendTransitionTime = Date.now();
+
+    setTimeout(() => {
+
+    console.log("✅ Transition timeout finished");
+
+    isExtendingToMeet = false;
+
+}, 10000);
+}
+
         if (changeInfo.status === "complete" && tab.url) {
             const service = detectService(tab.url);
                         
@@ -88,34 +108,60 @@
                 // Check if this is an extend operation
                 chrome.storage.local.get(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording'], async (result) => {
                     if (result.isExtendingToMeet) {
-                        console.log("🔄 EXTEND TRANSITION - Meet tab opened from Huddle");
-                        
-                        const transitionTime = result.extendTransitionTime || 0;
-                        const timeSinceExtend = Date.now() - transitionTime;
-                        
-                        if (timeSinceExtend < 10000) {
-                            console.log("✅ Valid extend transition - FORCE starting Meet recording");
-                            
-                            // Clear the flags
-                            chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording']);
-                            
-                            // FORCE start recording regardless of auto-record setting
-                            console.log("🎬 FORCE starting Meet recording (auto-record setting ignored)");
-                            setTimeout(() => {
-                                //startRecordingForTab(tabId, 'gmeet');
-                            }, 3000);
-                            
-                            // Also show a status message to the user
-                            chrome.tabs.sendMessage(tabId, { 
-                                action: "showMeetStatus", 
-                                message: "🎬 Auto-recording started (extended from Huddle)",
-                                duration: 5000
-                            });
-                        } else {
-                            console.log("⚠️ Extend flag expired - ignoring");
-                            chrome.storage.local.remove(['isExtendingToMeet', 'extendTransitionTime', 'forceMeetRecording']);
-                        }
-                    }
+    console.log("🔄 EXTEND TRANSITION - Meet tab opened from Huddle");
+
+    const transitionTime = result.extendTransitionTime || 0;
+    const timeSinceExtend = Date.now() - transitionTime;
+
+    if (timeSinceExtend < 10000) {
+        console.log("✅ Valid extend transition detected");
+
+        // Clear extend flags
+        chrome.storage.local.remove([
+            'isExtendingToMeet',
+            'extendTransitionTime',
+            'forceMeetRecording'
+        ]);
+
+        // CLOSE OLD RECORDER TABS FIRST
+        chrome.tabs.query({
+            url: chrome.runtime.getURL("recorder.html")
+        }, (tabs) => {
+
+            console.log("🧹 Closing old recorder tabs:", tabs.length);
+
+            tabs.forEach(tab => {
+                chrome.tabs.remove(tab.id, () => {
+                    console.log("✅ Closed old recorder tab:", tab.id);
+                });
+            });
+
+            // WAIT before opening NEW recorder
+            setTimeout(() => {
+
+                console.log("🎬 Starting NEW Meet recorder");
+
+                startRecordingForTab(tabId, 'gmeet');
+
+                chrome.tabs.sendMessage(tabId, {
+                    action: "showMeetStatus",
+                    message: "🎬 Recording continued in Meet tab",
+                    duration: 5000
+                });
+
+            }, 2000);
+        });
+
+    } else {
+        console.log("⚠️ Extend flag expired");
+
+        chrome.storage.local.remove([
+            'isExtendingToMeet',
+            'extendTransitionTime',
+            'forceMeetRecording'
+        ]);
+    }
+}
                 });
             }            
             
@@ -453,6 +499,7 @@
 
         console.log(`🎬 Starting recording for ${service} tab:`, tabId);
         
+        
         chrome.tabs.create({
             url: chrome.runtime.getURL("recorder.html"),
             active: false
@@ -482,7 +529,11 @@
                         }
                     } else {
                         console.log("✅ Recording started successfully");
-                        currentRecordingTab = tabId;
+
+currentRecordingTab = tabId;
+isAutoRecording = true;
+
+console.log("✅ Active recording tab updated:", currentRecordingTab);
                     }
                 });
             };
@@ -503,6 +554,9 @@
             } else {
                 console.log("⚠️ No recorder tabs found");
             }
+            setTimeout(() => {
+    closeRecorderTab();
+}, 3000);
         });
         
         currentRecordingTab = null;
@@ -512,23 +566,69 @@
     }
 
     // Monitor tab closures
-    chrome.tabs.onRemoved.addListener((tabId) => {
-        if (tabId === currentRecordingTab) {
-            console.log("❌ Source tab closed - stopping recording");
-            stopAllRecordings();
-        }
-        
-        chrome.tabs.get(tabId, (tab) => {
-            if (chrome.runtime.lastError) return;
-            
-            if (tab.url && tab.url.includes("recorder.html")) {
-                console.log("🛑 Recorder tab closed - cleaning up");
-                chrome.storage.local.remove(['isRecording', 'recordingTime', 'recordingStartTime', 'recordingTabId']);
-                currentRecordingTab = null;
-                isAutoRecording = false;
+   chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
+
+    // MEETING TAB CLOSED
+    if (tabId === currentRecordingTab) {
+
+        console.log("❌ Meeting tab closed/leaved");
+        console.log("🛑 Stopping recorder automatically");
+
+        // Find recorder tabs
+        chrome.tabs.query({
+            url: chrome.runtime.getURL("recorder.html")
+        }, (tabs) => {
+
+            if (tabs.length === 0) {
+                console.log("⚠️ No recorder tabs found");
+                return;
             }
+
+            tabs.forEach((tab) => {
+
+                console.log("📨 Sending stopRecording to recorder tab:", tab.id);
+
+                chrome.tabs.sendMessage(tab.id, {
+                    action: "stopRecording",
+                    forceAutoDownload: true
+                }, (response) => {
+
+                    if (chrome.runtime.lastError) {
+                        console.log("❌ Could not stop recorder:", chrome.runtime.lastError.message);
+                    } else {
+                        console.log("✅ Recorder stop message sent");
+                    }
+                });
+            });
         });
+
+        currentRecordingTab = null;
+        isAutoRecording = false;
+    }
+
+    // RECORDER TAB CLOSED
+    chrome.tabs.get(tabId, (tab) => {
+
+        if (chrome.runtime.lastError) {
+            return;
+        }
+
+        if (tab && tab.url && tab.url.includes("recorder.html")) {
+
+            console.log("🛑 Recorder tab closed");
+
+            chrome.storage.local.remove([
+                'isRecording',
+                'recordingTime',
+                'recordingStartTime',
+                'recordingTabId'
+            ]);
+
+            currentRecordingTab = null;
+            isAutoRecording = false;
+        }
     });
+});
 
     // ==================== MESSAGE HANDLER ====================
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -541,6 +641,16 @@
                     await handleDirectDownload(message.data, message.filename);
                     return { success: true };
                 }
+
+                if (message.action === "manualStopRecording") {
+    console.log("🛑 Background: Manual stop recording");
+
+    stopRecording();
+
+    sendResponse({ success: true });
+
+    return true;
+}
 
                 if (message.action === "downloadBlob") {
                     const blob = new Blob([new Uint8Array(message.data)], { type: message.mimeType });
@@ -672,10 +782,30 @@
 
                 // Common stop messages
                 if (message.action === "autoStopRecording") {
-                    console.log("🛑 Auto stop recording requested");
-                    stopAllRecordings();
-                    return { success: true };
-                }
+
+    console.log("🛑 Auto stop recording requested");
+
+    // Skip stop only during active Huddle → Meet transition
+    if (isExtendingToMeet) {
+
+        const transitionAge = Date.now() - extendTransitionTime;
+
+        if (transitionAge < 10000) {
+
+            console.log("⏳ Transition active - delaying stop");
+
+            return { success: true };
+        }
+
+        isExtendingToMeet = false;
+    }
+
+    console.log("🛑 FINAL STOP EXECUTING");
+
+    stopAllRecordings();
+
+    return { success: true };
+}
 
                 if (message.action === "recordingCompleted") {
                     currentRecordingTab = null;
@@ -874,7 +1004,26 @@
         chrome.runtime.getPlatformInfo(() => {});
     }, 20000);
 
-  
+  function closeRecorderTab() {
+
+    chrome.tabs.query({}, (tabs) => {
+
+        tabs.forEach((tab) => {
+
+            if (
+                tab.url &&
+                tab.url.includes(chrome.runtime.id) &&
+                tab.url.includes('recorder.html')
+            ) {
+
+                console.log("🗑️ Closing recorder tab:", tab.id);
+
+                chrome.tabs.remove(tab.id);
+            }
+        });
+    });
+}
+
     // Clean up stale extend flags after 30 seconds
     setInterval(() => {
         chrome.storage.local.get(['isExtendingToMeet', 'extendTransitionTime'], (result) => {
