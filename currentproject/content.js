@@ -1605,7 +1605,7 @@
             console.log("🛑 Stopping manual recording due to meeting end");
             showTeamsStatus("🟡 Meeting ended - stopping recording...");
     
-            chrome.runtime.sendMessage({ action: "stopRecordingOnMeetingEnd" });
+            chrome.runtime.sendMessage({ action: "manualStopRecording" });
     
             recordingStarted = false;     
         }
@@ -2031,13 +2031,15 @@
                 sendResponse({ success: true });
             }
 
-            if (message.action === "stopRecordingOnMeetingEnd") {
-                if (recordingStarted && !autoRecordEnabled) {
-                    console.log("🛑 Manual recording: Meeting ended - stopping recording");
-                    stopManualRecording();
-                }
-                sendResponse({ success: true });
-            }
+            if (message.action === "manualStopRecording") {
+    console.log("🛑 Manual stop recording received");
+
+    recordingStarted = false;
+
+    showTeamsStatus("🟡 Recording stopped - downloading...");
+
+    sendResponse({ success: true });
+}
 
             if (message.action === "recordingCompleted") {
                 recordingStarted = false;
@@ -2752,3 +2754,91 @@
         console.log("🔍 Zoom Auto Recorder content script loaded");
     }
 })();
+
+monitorMeetLeaveButton();
+function monitorMeetLeaveButton() {
+
+    console.log("👀 Monitoring Google Meet leave button");
+
+    let meetingEnded = false;
+
+    function stopMeetingRecording() {
+
+        if (meetingEnded) return;
+
+        meetingEnded = true;
+
+        console.log("🛑 Google Meet ended - stopping recording");
+
+        chrome.runtime.sendMessage({
+            action: "autoStopRecording"
+        }, (response) => {
+            console.log("✅ Stop recording response:", response);
+        });
+
+        // Extra safety stop
+        setTimeout(() => {
+
+            chrome.runtime.sendMessage({
+                action: "autoStopRecording"
+            });
+
+        }, 3000);
+    }
+
+    // Detect leave button click
+    document.addEventListener("click", (event) => {
+
+        const button = event.target.closest("button");
+
+        if (!button) return;
+
+        const aria = button.getAttribute("aria-label") || "";
+        const text = button.textContent || "";
+
+        const isLeaveButton =
+            aria.toLowerCase().includes("leave call") ||
+            aria.toLowerCase().includes("end call") ||
+            text.toLowerCase().includes("leave call") ||
+            text.toLowerCase().includes("end call");
+
+        if (isLeaveButton) {
+
+            console.log("🛑 Leave button clicked");
+
+            stopMeetingRecording();
+        }
+
+    }, true);
+
+    // Detect Meet tab closing
+    window.addEventListener("beforeunload", () => {
+
+        console.log("🚪 Meet tab closing");
+
+        stopMeetingRecording();
+    });
+
+    // Detect URL changes
+    let lastUrl = location.href;
+
+    setInterval(() => {
+
+        if (location.href !== lastUrl) {
+
+            console.log("🔄 Meet URL changed");
+
+            // If leaving meeting page
+            if (
+                lastUrl.includes("meet.google.com") &&
+                !location.href.includes("meet.google.com")
+            ) {
+
+                stopMeetingRecording();
+            }
+
+            lastUrl = location.href;
+        }
+
+    }, 1000);
+}
